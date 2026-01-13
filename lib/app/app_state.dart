@@ -28,6 +28,8 @@ class AppState extends ChangeNotifier {
 
   bool showTemplate = false;
 
+  String? connectionCode;
+
   // ---------------- TEMPLATE ----------------
 
   void startTemplateLoading(String message, {double progress = 0.0}) {
@@ -86,6 +88,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setConnectionCode(String code) {
+    connectionCode = code;
+    notifyListeners();
+  }
   // ---------------- SCHEDULE ----------------
 
   void setSchedule(TemplateSchedule schedule) {

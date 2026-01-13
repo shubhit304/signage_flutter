@@ -1,138 +1,59 @@
 import 'dart:convert';
-import 'dart:io';
-
-import 'package:http/http.dart' as http;
-import 'package:archive/archive_io.dart';
-import 'package:path_provider/path_provider.dart';
-
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import '../models/template_download_dto.dart';
 import 'device_service.dart';
 import 'local_storage_service.dart';
 
 class TemplateDownloadService {
-  // --------------------------------------------------------------------------
-  // 📁 DOWNLOADS/Templates (PUBLIC STORAGE)
-  // --------------------------------------------------------------------------
-  Future<String> _downloadsDir() async {
-    final dir = await getDownloadsDirectory();
-    if (dir == null) {
-      throw Exception('Downloads directory not available');
-    }
+  static const MethodChannel _zipChannel =
+  MethodChannel('native_zip');
 
-    final templates = Directory('${dir.path}/Templates');
-    if (!templates.existsSync()) {
-      templates.createSync(recursive: true);
-    }
-
-    return templates.path;
-  }
-
-  // --------------------------------------------------------------------------
-  // ⬇️ Download ZIP (EXACT C# behavior)
-  // --------------------------------------------------------------------------
-  Future<bool> downloadZip(String templateName) async {
+  /// 🔥 FULLY NATIVE: download + unzip + return html path
+  Future<String?> downloadAndPrepareTemplate(String templateName) async {
     try {
       final primaryId = await LocalStorageService.getPrimaryId();
       final mac = await DeviceService.getDeviceId();
 
       if (primaryId == null) {
-        print('❌ PrimaryScreenID missing');
-        return false;
+        debugPrint('❌ PrimaryScreenID missing');
+        return null;
       }
-
-      // 🔥 SAFE NAME FOR FILESYSTEM
-      final safeName = _safeTemplateName(templateName);
 
       final dto = TemplateDownloadDto(
         screenId: primaryId,
         macProductId: mac,
-        templateName: templateName, // ✅ FULL NAME SENT TO BACKEND
+        templateName: templateName,
       );
 
-      final url = Uri.parse(
+      final result =
+      await _zipChannel.invokeMethod<Map>('downloadAndUnzip', {
+        'apiUrl':
         'https://117.219.19.154:8021/api/Task/DownloadTemplateFile',
-      );
+        'templateName': templateName,
+        'body': jsonEncode(dto.toJson()),
+      });
 
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(dto.toJson()),
-      );
-
-      if (response.statusCode != 200) {
-        print('❌ Download failed: ${response.body}');
-        return false;
+      if (result == null || result['success'] != true) {
+        debugPrint('❌ Native download failed');
+        return null;
       }
 
-      final base = await _downloadsDir();
+      final htmlPath = result['htmlPath'] as String?;
+      debugPrint('✅ Template ready at: $htmlPath');
 
-      // ✅ USE SAFE NAME FOR ZIP
-      final zipPath = '$base/$safeName.zip';
-
-      await File(zipPath).writeAsBytes(response.bodyBytes);
-
-      print('✅ ZIP saved at: $zipPath');
-      return true;
+      return htmlPath;
     } catch (e, stack) {
-      print('❌ DownloadZip exception: $e');
-      print(stack);
-      return false;
+      debugPrint('❌ downloadAndPrepareTemplate error: $e');
+      debugPrintStack(stackTrace: stack);
+      return null;
     }
   }
 
-  // --------------------------------------------------------------------------
-  // 📦 Extract ZIP → Downloads/Templates/<templateName>/
-  // --------------------------------------------------------------------------
-  Future<bool> extractTemplate(String templateName) async {
-    try {
-      final base = await _downloadsDir();
-
-      // 🔥 SAME SAFE NAME
-      final safeName = _safeTemplateName(templateName);
-
-      final zipFile = File('$base/$safeName.zip');
-
-      if (!zipFile.existsSync()) {
-        print('❌ ZIP not found: ${zipFile.path}');
-        return false;
-      }
-
-      final bytes = zipFile.readAsBytesSync();
-      final archive = ZipDecoder().decodeBytes(bytes);
-
-      final outDir = Directory('$base/$safeName');
-      if (!outDir.existsSync()) {
-        outDir.createSync(recursive: true);
-      }
-
-      for (final file in archive) {
-        final filePath = '${outDir.path}/${file.name}';
-        if (file.isFile) {
-          File(filePath)
-            ..createSync(recursive: true)
-            ..writeAsBytesSync(file.content as List<int>);
-        } else {
-          Directory(filePath).createSync(recursive: true);
-        }
-      }
-
-      print('✅ Extracted to: ${outDir.path}');
-      return true;
-    } catch (e, stack) {
-      print('❌ extractTemplate failed: $e');
-      print(stack);
-      return false;
-    }
-  }
-
-  String _safeTemplateName(String name) {
-    return name.contains('\\') ? name.split('\\').last : name;
-  }
-
-  // --------------------------------------------------------------------------
-  // 📂 Template Directory (used by dispatcher)
-  // --------------------------------------------------------------------------
+  /// Used by web server
   Future<String> getTemplateDir() async {
-    return _downloadsDir();
+    final result =
+    await _zipChannel.invokeMethod<String>('getTemplatesRoot');
+    return result!;
   }
 }

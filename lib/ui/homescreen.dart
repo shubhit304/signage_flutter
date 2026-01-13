@@ -28,14 +28,41 @@ class HomeScreen extends StatelessWidget {
 
               // ✅ IDLE
               if (!state.showTemplate && !state.isTemplateLoading)
-                const Center(
-                  child: Text(
-                    'WAITING FOR CONTENT',
-                    style: TextStyle(
-                      color: Colors.white38,
-                      fontSize: 18,
-                      letterSpacing: 1.5,
-                    ),
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'WAITING FOR CONTENT',
+                        style: TextStyle(
+                          color: Colors.white38,
+                          fontSize: 18,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      if (state.connectionCode != null) ...[
+                        const Text(
+                          'UNIQUE CODE',
+                          style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 12,
+                            letterSpacing: 2,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          state.connectionCode!,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            letterSpacing: 4,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
 

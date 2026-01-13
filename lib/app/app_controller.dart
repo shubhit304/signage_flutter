@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
-import '../native/native_webview_bridge.dart';
+import 'package:signage/models/template_manager.dart';
 import '../services/local_storage_service.dart';
 import '../services/location_service.dart';
 import '../services/screen_status_service.dart';
@@ -76,6 +76,8 @@ class AppController {
       playerType: 'ANDROID',
       macAddress: deviceId,
     );
+
+    appState.setConnectionCode(connectionCode);
 
     // 1️⃣ CHECK CONNECTIVITY
     while (true) {
@@ -165,14 +167,30 @@ class AppController {
     _startScheduleTimer();
 
     // ⭐ Load default template if present (LeftScreen)
-    await dispatcher.loadDefaultTemplateIfExists();
+    //await dispatcher.loadDefaultTemplateIfExists();
+
+    final lastTemplate = await TemplateManager.getActiveTemplate();
+    if (lastTemplate != null) {
+      AppToast.show('Temp load after restart: $lastTemplate');
+
+      // Stop anything running
+      appState.hideTemplate();
+      appState.clearTemplate();
+
+      appState.startTemplateLoading('LOADING DEFAULT TEMPLATE', progress: 0.2);
+
+      appState.setTemplate(lastTemplate ?? 'default');
+
+      appState.showTemplateView();
+      appState.stopTemplateLoading();
+    }
   }
 
   void _startScheduleTimer() {
     _scheduleTimer?.cancel();
 
     _scheduleTimer = Timer.periodic(
-      const Duration(seconds: 10), // same idea as WinForms polling
+      const Duration(minutes: 1), // same idea as WinForms polling
       (_) => _evaluateSchedule(),
     );
 
@@ -220,9 +238,6 @@ class AppController {
       appState.hideTemplate();
       appState.clearTemplate();
 
-      await NativeWebViewBridge.hide();
-      await NativeWebViewBridge.clear();
-
       print('🟡 Player idle → waiting for next command');
     }
   }
@@ -236,27 +251,24 @@ class AppController {
     print('💓 Starting HEALTH TIMER');
     AppToast.show('Health service started');
 
-    _healthTimer = Timer.periodic(
-      const Duration(seconds: 15), // SAME as WinForms
-      (_) async {
-        if (!appState.isClientRegistered) return;
-        AppToast.show('Health ping sent');
-        final dto = ScreenHealthDetailsDTO(
-          screenId: appState.screenId!,
-          macProductId: macAddress,
-          templateName: appState.activeTemplateFile ?? '',
-          totalSpace: 0, // TODO: Android storage calc
-          filledSpace: 0, // TODO: Android storage calc
-        );
+    _healthTimer = Timer.periodic(const Duration(minutes: 30), (_) async {
+      if (!appState.isClientRegistered) return;
+      AppToast.show('Health ping sent');
+      final dto = ScreenHealthDetailsDTO(
+        screenId: appState.screenId!,
+        macProductId: macAddress,
+        templateName: appState.activeTemplateFile ?? '',
+        totalSpace: 0, // TODO: Android storage calc
+        filledSpace: 0, // TODO: Android storage calc
+      );
 
-        final cmd = await healthService.sendHealth(dto);
+      final cmd = await healthService.sendHealth(dto);
 
-        /// WinForms: CommandParsing(msg)
-        if (cmd != null && cmd.commandType != SseCommandType.templateUpdate) {
-          dispatcher.handle(cmd);
-        }
-      },
-    );
+      /// WinForms: CommandParsing(msg)
+      if (cmd != null && cmd.commandType != SseCommandType.templateUpdate) {
+        dispatcher.handle(cmd);
+      }
+    });
 
     print('💓 Health timer started');
   }

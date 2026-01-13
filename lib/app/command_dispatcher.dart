@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:signage/models/template_manager.dart';
+
 import '../models/sse_message.dart';
-import '../native/native_webview_bridge.dart';
 import '../scheduling/template_schedule.dart';
 import '../scheduling/template_schedule_parser.dart';
 import '../server/local_web_server.dart';
@@ -76,8 +77,6 @@ class CommandDispatcher {
       // Stop anything running
       appState.hideTemplate();
       appState.clearTemplate();
-      await NativeWebViewBridge.hide();
-      await NativeWebViewBridge.clear();
 
       appState.startTemplateLoading('LOADING DEFAULT TEMPLATE', progress: 0.2);
 
@@ -110,17 +109,19 @@ class CommandDispatcher {
       // 🔴 HARD STOP CURRENT TEMPLATE
       appState.hideTemplate();
       appState.clearTemplate();
-      await NativeWebViewBridge.hide();
-      await NativeWebViewBridge.clear();
 
       // 🧹 DELETE OLD FILES (🔥 THIS IS THE FIX)
-      await _clearAllTemplates();
+      //await _clearAllTemplates();
 
       // 🟡 DOWNLOADING
       appState.startTemplateLoading('DOWNLOADING TEMPLATE', progress: 0.15);
       AppToast.show('Downloading template');
       final templatePath = await _downloadAndPrepareTemplate(templateName);
       if (templatePath == null) return;
+
+      AppToast.show('Temp receive: $templatePath');
+      await TemplateManager.setActiveTemplate(templatePath);
+      //await TemplateManager.restartWithTemplate(templatePath);
 
       // 🟠 LOADING
       appState.updateLoading('LOADING CONTENT', 0.75);
@@ -131,7 +132,7 @@ class CommandDispatcher {
       // 🟢 FINALIZING
       appState.updateLoading('FINALIZING', 0.95);
 
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(const Duration(milliseconds: 500));
       appState.showTemplateView();
 
       await _updateTemplateStatus(
@@ -144,62 +145,88 @@ class CommandDispatcher {
     }
   }
 
-  Future<void> _clearAllTemplates() async {
-    final baseDir = await _templateService.getTemplateDir();
-    final dir = Directory(baseDir);
-
-    if (!dir.existsSync()) return;
-
-    print('🧹 Clearing old templates...');
-
-    for (final entity in dir.listSync(recursive: false)) {
-      try {
-        if (entity is Directory) {
-          entity.deleteSync(recursive: true);
-          print('🗑 Deleted folder: ${entity.path}');
-        } else if (entity is File && entity.path.endsWith('.zip')) {
-          entity.deleteSync();
-          print('🗑 Deleted zip: ${entity.path}');
-        }
-      } catch (e) {
-        print('❌ Failed to delete ${entity.path}: $e');
-      }
-    }
-  }
-
+  // Future<void> _clearAllTemplates() async {
+  //   final baseDir = await _templateService.getTemplateDir();
+  //   final dir = Directory(baseDir);
+  //
+  //   if (!dir.existsSync()) return;
+  //
+  //   print('🧹 Clearing old templates...');
+  //
+  //   for (final entity in dir.listSync(recursive: false)) {
+  //     try {
+  //       if (entity is Directory) {
+  //         entity.deleteSync(recursive: true);
+  //         print('🗑 Deleted folder: ${entity.path}');
+  //       } else if (entity is File && entity.path.endsWith('.zip')) {
+  //         entity.deleteSync();
+  //         print('🗑 Deleted zip: ${entity.path}');
+  //       }
+  //     } catch (e) {
+  //       print('❌ Failed to delete ${entity.path}: $e');
+  //     }
+  //   }
+  // }
   Future<String?> _downloadAndPrepareTemplate(String templateName) async {
-    final cleanName = templateName.contains('\\')
-        ? templateName.split('\\').last
-        : templateName;
+    try {
+      AppToast.show('Downloading template');
 
-    // 1️⃣ Download ZIP
-    final zipOk = await _templateService.downloadZip(templateName);
-    if (!zipOk) return null;
+      // 🔥 ONE native call does everything:
+      // - download zip
+      // - unzip
+      // - resolve HTML path
+      final htmlPath = await _templateService.downloadAndPrepareTemplate(
+        templateName,
+      );
 
-    // 2️⃣ Extract ZIP
-    final extractOk = await _templateService.extractTemplate(cleanName);
-    if (!extractOk) return null;
+      if (htmlPath == null || htmlPath.isEmpty) {
+        print('❌ Native download/unzip failed');
+        return null;
+      }
 
-    // 3️⃣ Resolve template directory
-    final baseDir = await _templateService.getTemplateDir();
-    final templateDir = Directory('$baseDir/$cleanName');
+      AppToast.show('Download template success');
 
-    if (!templateDir.existsSync()) {
-      print('❌ Template directory not found');
+      print('✅ Using existing HTML: $htmlPath');
+      return htmlPath;
+    } catch (e) {
+      print('❌ _downloadAndPrepareTemplate failed: $e');
       return null;
     }
-
-    // 4️⃣ USE EXISTING HTML (IMPORTANT)
-    final htmlFile = File('${templateDir.path}/$cleanName.html');
-    AppToast.show('Download template success');
-    if (!htmlFile.existsSync()) {
-      print('❌ HTML file missing: ${htmlFile.path}');
-      return null;
-    }
-
-    print('✅ Using existing HTML: ${htmlFile.path}');
-    return htmlFile.path;
   }
+
+  // Future<String?> _downloadAndPrepareTemplate(String templateName) async {
+  //   final cleanName = templateName.contains('\\')
+  //       ? templateName.split('\\').last
+  //       : templateName;
+  //
+  //   // 1️⃣ Download ZIP
+  //   final zipOk = await _templateService.downloadZip(templateName);
+  //   if (!zipOk) return null;
+  //
+  //   // 2️⃣ Extract ZIP
+  //   final extractOk = await _templateService.extractTemplate(cleanName);
+  //   if (!extractOk) return null;
+  //
+  //   // 3️⃣ Resolve template directory
+  //   final baseDir = await _templateService.getTemplateDir();
+  //   final templateDir = Directory('$baseDir/$cleanName');
+  //
+  //   if (!templateDir.existsSync()) {
+  //     print('❌ Template directory not found');
+  //     return null;
+  //   }
+  //
+  //   // 4️⃣ USE EXISTING HTML (IMPORTANT)
+  //   final htmlFile = File('${templateDir.path}/$cleanName.html');
+  //   AppToast.show('Download template success');
+  //   if (!htmlFile.existsSync()) {
+  //     print('❌ HTML file missing: ${htmlFile.path}');
+  //     return null;
+  //   }
+  //
+  //   print('✅ Using existing HTML: ${htmlFile.path}');
+  //   return htmlFile.path;
+  // }
 
   Future<String?> getLocalIpAddress() async {
     final interfaces = await NetworkInterface.list(
@@ -237,35 +264,41 @@ class CommandDispatcher {
   //   appState.setTemplate(url);
   // }
 
+  // Future<void> _loadTemplate(String htmlPath) async {
+  //   final templatesRoot = await _templateService.getTemplateDir();
+  //
+  //   // 🔥 Start server on all interfaces
+  //   await LocalWebServer.start(templatesRoot, port: 8080);
+  //
+  //   final url = await _buildTemplateUrl(htmlPath);
+  //
+  //   print('🧠 WebView loading: $url');
+  //   AppToast.show('Loading template on screen...');
+  //
+  //   appState.setTemplate(url);
+  // }
+
   Future<void> _loadTemplate(String htmlPath) async {
-    final templatesRoot = await _templateService.getTemplateDir();
-
-    // 🔥 Start server on all interfaces
-    await LocalWebServer.start(templatesRoot, port: 8080);
-
-    final relativePath = htmlPath.replaceFirst('$templatesRoot/', '');
-
-    // 🔑 Resolve LAN IP
-    final ip = await getLocalIpAddress();
-
-    // ✅ Fallback to localhost if IP not found
-    final host = ip ?? 'localhost';
-
-    final url = 'http://$host:8080/$relativePath';
-
-    print('🧠 Native WebView loading: $url');
+    print('🧠 WebView loading FILE directly: $htmlPath');
     AppToast.show('Loading template on screen...');
 
-    // 🔥 Native WebView lifecycle
-    await NativeWebViewBridge.hide();
-    await NativeWebViewBridge.clear();
-
-    await NativeWebViewBridge.loadTemplate(url);
-    await NativeWebViewBridge.show();
-
-    // Keep state for backend health reporting
-    appState.setTemplate(url);
+    // ✅ STORE FILE PATH, NOT URL
+    appState.setTemplate(htmlPath);
   }
+
+  // Future<String> _buildTemplateUrl(String htmlPath) async {
+  //   final templatesRoot = await _templateService.getTemplateDir();
+  //
+  //   // Convert absolute file path → relative web path
+  //   final relativePath = htmlPath.startsWith(templatesRoot)
+  //       ? htmlPath.replaceFirst('$templatesRoot/', '')
+  //       : htmlPath;
+  //
+  //   final ip = await getLocalIpAddress();
+  //   final host = ip ?? 'localhost';
+  //
+  //   return 'http://$host:8080/$relativePath';
+  // }
 
   // ---------------------------------------------------------------------------
   // SCHEDULED UPDATE
@@ -276,7 +309,7 @@ class CommandDispatcher {
     if (templateName == null || templateName.isEmpty) return;
     AppToast.show('Scheduled content started');
     // 🧹 CLEAR OLD FIRST
-    await _clearAllTemplates();
+    //await _clearAllTemplates();
     print('📥 Scheduled template received → downloading');
 
     // 🔽 DOWNLOAD + EXTRACT (same as WinForms)
@@ -304,27 +337,39 @@ class CommandDispatcher {
 
     print('✅ Scheduled template ready (waiting for time window)');
   }
+  //
+  // Future<void> loadLocalTemplate(
+  //   String htmlPath, {
+  //   bool scheduled = false,
+  // }) async {
+  //   print('🧠 Loading local scheduled template: $htmlPath');
+  //
+  //   appState.hideTemplate();
+  //   // await NativeWebViewBridge.hide();
+  //   // await NativeWebViewBridge.clear();
+  //
+  //   final templatesRoot = await _templateService.getTemplateDir();
+  //   await LocalWebServer.start(templatesRoot, port: 8080);
+  //
+  //   final url = await _buildTemplateUrl(htmlPath);
+  //
+  //   print('🧠 WebView loading (scheduled): $url');
+  //   AppToast.show('🧠 WebView loading (scheduled)');
+  //   appState.setTemplate(url, scheduled: scheduled);
+  //   appState.showTemplateView();
+  // }
 
   Future<void> loadLocalTemplate(
     String htmlPath, {
     bool scheduled = false,
   }) async {
     print('🧠 Loading local scheduled template: $htmlPath');
+    AppToast.show('Loading scheduled template');
 
     appState.hideTemplate();
-    await NativeWebViewBridge.hide();
-    await NativeWebViewBridge.clear();
 
-    final templatesRoot = await _templateService.getTemplateDir();
-    await LocalWebServer.start(templatesRoot, port: 8080);
-
-    final relativePath = htmlPath.replaceFirst('$templatesRoot/', '');
-    final url = 'http://localhost:8080/$relativePath';
-
-    await NativeWebViewBridge.loadTemplate(url);
-    await NativeWebViewBridge.show();
-
-    appState.setTemplate(url, scheduled: scheduled);
+    // ✅ DIRECT FILE PATH
+    appState.setTemplate(htmlPath, scheduled: scheduled);
     appState.showTemplateView();
   }
 
